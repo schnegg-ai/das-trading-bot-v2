@@ -411,8 +411,7 @@ function showAllPnL() {
 
   let totalValue = 0;
   const allAssets = [
-    ...CRYPTO_COINS.map(s  => ({ sym: s, type: "crypto" })),
-    ...STOCK_SYMBOLS.map(s => ({ sym: s, type: "stock"  })),
+    ...CRYPTO_COINS.map(s => ({ sym: s, type: "crypto" })),
   ];
 
   for (const { sym, type } of allAssets) {
@@ -420,8 +419,7 @@ function showAllPnL() {
     const roi     = ((p.value - p.initialValue) / p.initialValue * 100).toFixed(2);
     const winRate = p.trades > 0 ? ((p.wins / p.trades) * 100).toFixed(1) : "0.0";
     const icon    = parseFloat(roi) >= 0 ? "🟢" : "🔴";
-    const badge   = type === "stock" ? "📈" : "🪙";
-    console.log(`  ${icon} ${sym.padEnd(8)} ${badge} ${type.padEnd(5)} $${p.value.toFixed(2).padEnd(10)} ${((parseFloat(roi) >= 0 ? "+" : "") + roi + "%").padEnd(10)} ${p.trades.toString().padEnd(8)} ${winRate}%`);
+    console.log(`  ${icon} ${sym.padEnd(8)} 🪙 crypto $${p.value.toFixed(2).padEnd(10)} ${((parseFloat(roi) >= 0 ? "+" : "") + roi + "%").padEnd(10)} ${p.trades.toString().padEnd(8)} ${winRate}%`);
     totalValue += p.value;
   }
 
@@ -641,9 +639,9 @@ async function run() {
   console.log("  🪙 CRYPTO:\n");
   for (const sym of CRYPTO_COINS) await runAsset(sym, "crypto");
 
-  // US-Aktien
-  console.log("\n  📈 US AKTIEN:\n");
-  for (const sym of STOCK_SYMBOLS) await runAsset(sym, "stock");
+  // US-Aktien deaktiviert
+  // console.log("\n  📈 US AKTIEN:\n");
+  // for (const sym of STOCK_SYMBOLS) await runAsset(sym, "stock");
 
   showAllPnL();
 
@@ -666,8 +664,7 @@ async function sendDailyEmail() {
   }
 
   const allAssets = [
-    ...CRYPTO_COINS.map(s  => ({ sym: s, type: "crypto" })),
-    ...STOCK_SYMBOLS.map(s => ({ sym: s, type: "stock"  })),
+    ...CRYPTO_COINS.map(s => ({ sym: s, type: "crypto" })),
   ];
 
   let totalValue    = 0;
