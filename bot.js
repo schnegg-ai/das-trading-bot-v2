@@ -22,6 +22,7 @@
 import "dotenv/config";
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from "fs";
 import crypto from "crypto";
+import nodemailer from "nodemailer";
 
 // ─── Credentials Check ───────────────────────────────────────────────────────
 
@@ -645,12 +646,182 @@ async function run() {
   for (const sym of STOCK_SYMBOLS) await runAsset(sym, "stock");
 
   showAllPnL();
+
+  // Tägliche Email um DAILY_REPORT_HOUR UTC
+  const reportHour = parseInt(process.env.DAILY_REPORT_HOUR || "8");
+  const nowH = now.getUTCHours();
+  const nowM = now.getUTCMinutes();
+  if (nowH === reportHour && nowM < 15) {
+    console.log(`\n📧 Tagesbericht wird gesendet (${reportHour}:00 UTC)...`);
+    sendDailyEmail().catch(err => console.log("⚠️  Email Fehler:", err.message));
+  }
+}
+
+// ─── Email Report ─────────────────────────────────────────────────────────────
+
+async function sendDailyEmail() {
+  if (!CONFIG.smtp.email || !CONFIG.smtp.password || !CONFIG.smtp.reportTo) {
+    console.log("⚠️  SMTP nicht konfiguriert — E-Mail übersprungen");
+    return;
+  }
+
+  const allAssets = [
+    ...CRYPTO_COINS.map(s  => ({ sym: s, type: "crypto" })),
+    ...STOCK_SYMBOLS.map(s => ({ sym: s, type: "stock"  })),
+  ];
+
+  let totalValue    = 0;
+  let totalInvested = 0;
+  let cryptoRows    = "";
+  let stockRows     = "";
+
+  for (const { sym, type } of allAssets) {
+    const p       = loadPortfolio(sym, type);
+    const roi     = ((p.value - p.initialValue) / p.initialValue * 100).toFixed(2);
+    const winRate = p.trades > 0 ? ((p.wins / p.trades) * 100).toFixed(1) : "0.0";
+    const pnlColor = parseFloat(roi) >= 0 ? "#27ae60" : "#e74c3c";
+    const pnlSign  = parseFloat(roi) >= 0 ? "+" : "";
+    const icon     = type === "stock" ? "📈" : "🪙";
+    const row = `
+      <tr style="border-bottom:1px solid #2d2d2d;">
+        <td style="padding:10px 14px;">${icon} <b>${sym}</b></td>
+        <td style="padding:10px 14px;text-align:center;">${type === "stock" ? "Aktie" : "Crypto"}</td>
+        <td style="padding:10px 14px;text-align:right;">$${p.value.toFixed(2)}</td>
+        <td style="padding:10px 14px;text-align:right;color:${pnlColor};">${pnlSign}${roi}%</td>
+        <td style="padding:10px 14px;text-align:center;">${p.trades}</td>
+        <td style="padding:10px 14px;text-align:center;">${winRate}%</td>
+        <td style="padding:10px 14px;text-align:right;color:${pnlColor};">${pnlSign}$${p.totalPnL.toFixed(2)}</td>
+      </tr>`;
+    if (type === "crypto") cryptoRows += row;
+    else stockRows += row;
+    totalValue    += p.value;
+    totalInvested += p.initialValue;
+  }
+
+  const totalROI   = ((totalValue - totalInvested) / totalInvested * 100).toFixed(2);
+  const roiColor   = parseFloat(totalROI) >= 0 ? "#27ae60" : "#e74c3c";
+  const roiSign    = parseFloat(totalROI) >= 0 ? "+" : "";
+  const now        = new Date();
+  const dateStr    = now.toLocaleDateString("de-DE", { weekday:"long", year:"numeric", month:"long", day:"numeric" });
+  const timeStr    = now.toUTCString();
+  const mode       = CONFIG.paperTrading ? "📋 PAPER TRADING" : "🔴 LIVE TRADING";
+  const progress   = Math.min((totalValue / (totalInvested * (CONFIG.targetUSD / CONFIG.initialCapital))) * 100, 100).toFixed(1);
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:'Segoe UI',Arial,sans-serif;color:#e0e0e0;">
+  <div style="max-width:700px;margin:0 auto;background:#111;border-radius:12px;overflow:hidden;box-shadow:0 4px 30px rgba(0,0,0,0.5);">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);padding:30px 40px;">
+      <h1 style="margin:0;font-size:24px;color:#fff;">📊 DAS Bot v2 — Tagesbericht</h1>
+      <p style="margin:8px 0 0;color:#aaa;font-size:14px;">${dateStr} | ${mode}</p>
+    </div>
+
+    <!-- Gesamtübersicht -->
+    <div style="display:flex;gap:0;border-bottom:1px solid #222;">
+      <div style="flex:1;padding:24px 30px;border-right:1px solid #222;text-align:center;">
+        <div style="color:#aaa;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Gesamtportfolio</div>
+        <div style="font-size:28px;font-weight:700;margin-top:6px;color:#fff;">$${totalValue.toFixed(2)}</div>
+        <div style="color:#aaa;font-size:12px;margin-top:4px;">von $${totalInvested.toFixed(2)} investiert</div>
+      </div>
+      <div style="flex:1;padding:24px 30px;border-right:1px solid #222;text-align:center;">
+        <div style="color:#aaa;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Gesamt ROI</div>
+        <div style="font-size:28px;font-weight:700;margin-top:6px;color:${roiColor};">${roiSign}${totalROI}%</div>
+        <div style="color:#aaa;font-size:12px;margin-top:4px;">${roiSign}$${(totalValue - totalInvested).toFixed(2)}</div>
+      </div>
+      <div style="flex:1;padding:24px 30px;text-align:center;">
+        <div style="color:#aaa;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Ziel $${(CONFIG.targetUSD * allAssets.length).toLocaleString()}</div>
+        <div style="font-size:28px;font-weight:700;margin-top:6px;color:#f39c12;">${progress}%</div>
+        <div style="background:#222;border-radius:10px;height:8px;margin-top:8px;overflow:hidden;">
+          <div style="background:linear-gradient(90deg,#f39c12,#e74c3c);height:100%;width:${progress}%;border-radius:10px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Crypto Tabelle -->
+    <div style="padding:24px 30px 0;">
+      <h2 style="margin:0 0 14px;font-size:16px;color:#aaa;border-bottom:1px solid #222;padding-bottom:10px;">🪙 CRYPTO — Kraken</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#1a1a1a;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">
+            <th style="padding:10px 14px;text-align:left;">Asset</th>
+            <th style="padding:10px 14px;text-align:center;">Typ</th>
+            <th style="padding:10px 14px;text-align:right;">Portfolio</th>
+            <th style="padding:10px 14px;text-align:right;">ROI</th>
+            <th style="padding:10px 14px;text-align:center;">Trades</th>
+            <th style="padding:10px 14px;text-align:center;">Win%</th>
+            <th style="padding:10px 14px;text-align:right;">P&L</th>
+          </tr>
+        </thead>
+        <tbody>${cryptoRows}</tbody>
+      </table>
+    </div>
+
+    <!-- Aktien Tabelle -->
+    <div style="padding:24px 30px 0;">
+      <h2 style="margin:0 0 14px;font-size:16px;color:#aaa;border-bottom:1px solid #222;padding-bottom:10px;">📈 US AKTIEN — Alpaca</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#1a1a1a;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">
+            <th style="padding:10px 14px;text-align:left;">Asset</th>
+            <th style="padding:10px 14px;text-align:center;">Typ</th>
+            <th style="padding:10px 14px;text-align:right;">Portfolio</th>
+            <th style="padding:10px 14px;text-align:right;">ROI</th>
+            <th style="padding:10px 14px;text-align:center;">Trades</th>
+            <th style="padding:10px 14px;text-align:center;">Win%</th>
+            <th style="padding:10px 14px;text-align:right;">P&L</th>
+          </tr>
+        </thead>
+        <tbody>${stockRows}</tbody>
+      </table>
+    </div>
+
+    <!-- Strategie -->
+    <div style="padding:24px 30px;">
+      <div style="background:#1a1a1a;border-radius:8px;padding:16px 20px;font-size:12px;color:#888;">
+        <b style="color:#aaa;">⚙️ Strategie:</b> 6-Confluence Framework (Marktstruktur → Top-Down → AOI → BOS → Retest → Candlestick)<br>
+        <b style="color:#aaa;">📐 Risiko:</b> SL 0.5% | TP 1.5% (1:3 RR) | Compounding: ${(CONFIG.compoundPct * 100).toFixed(0)}% pro Trade<br>
+        <b style="color:#aaa;">🕐 Generiert:</b> ${timeStr}
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#0a0a0a;padding:16px 30px;text-align:center;font-size:11px;color:#555;">
+      DAS Trading Bot v2 — 6-Confluence Framework | Basiert auf DAS Trading Handbuch
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: CONFIG.smtp.email, pass: CONFIG.smtp.password },
+  });
+
+  await transporter.sendMail({
+    from:    `"DAS Bot v2 📊" <${CONFIG.smtp.email}>`,
+    to:      CONFIG.smtp.reportTo,
+    subject: `📊 DAS Bot v2 | Portfolio $${totalValue.toFixed(2)} | ROI ${roiSign}${totalROI}% | ${dateStr}`,
+    html,
+  });
+
+  console.log(`✅ Email gesendet an ${CONFIG.smtp.reportTo}`);
 }
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 if (process.argv.includes("--pnl")) {
   showAllPnL();
+} else if (process.argv.includes("--test-email")) {
+  console.log("📧 Sende Test-Email (DAS Bot v2)...");
+  CRYPTO_COINS.forEach(s  => initCsv(s, "crypto"));
+  STOCK_SYMBOLS.forEach(s => initCsv(s, "stock"));
+  sendDailyEmail()
+    .then(() => console.log("✅ Test-Email erfolgreich!"))
+    .catch(err => console.error("❌ Email Fehler:", err.message));
 } else {
   run().catch(err => {
     console.error("\n❌ Bot Fehler:", err.message);
