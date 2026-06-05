@@ -801,7 +801,7 @@ async function sendDailyEmail() {
   await transporter.sendMail({
     from:    `"DAS Bot v2 📊" <${CONFIG.smtp.email}>`,
     to:      CONFIG.smtp.reportTo,
-    subject: `📊 DAS Bot v2 | Portfolio $${totalValue.toFixed(2)} | ROI ${roiSign}${totalROI}% | ${dateStr}`,
+    subject: `BOT 2 📊 | $${totalValue.toFixed(2)} | ROI ${roiSign}${totalROI}% | ${dateStr}`,
     html,
   });
 
